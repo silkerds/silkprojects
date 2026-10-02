@@ -28,7 +28,7 @@ query = {
 lrclib_url = "https://lrclib.net/api/get"
 
 headers = {
-    "User-Agent": "silkpuller v1.0.2 https://github.com/silkerds/silkprojects"
+    "User-Agent": "silkpuller v1.0.3 https://github.com/silkerds/silkprojects"
 }
 
 existvar = {
