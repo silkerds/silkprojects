@@ -8,6 +8,7 @@ import time
 import os
 import sys
 import select
+import json
 
 #-------------------------------------
 
@@ -27,7 +28,7 @@ query = {
 lrclib_url = "https://lrclib.net/api/get"
 
 headers = {
-    "User-Agent": "silkpuller v1.0.0 https://github.com/silkerds/silkprojects"
+    "User-Agent": "silkpuller v1.0.1 https://github.com/silkerds/silkprojects"
 }
 
 existvar = {
@@ -153,6 +154,8 @@ def disclaimer():
     print("make sure your music has metadata for its artist, title, and album")
     print("by default replaces .txt lyric files (with the naming convention from this script)")
     print("with .lrc synced lyric files if the .txt exists and it finds synced lyrics")
+    print("makes a file in whatever directory you point it at that contains dumps for diagnostics if an error happens")
+    print("./silkpuller-errors.txt")
 
 #-------------------------------------
 
@@ -162,7 +165,11 @@ def getpath():
     while options["pathready"] == False:
         options["path"] = Path(f"/{input("/")}")
         if options["path"].exists():
-            options["pathready"] = True
+            nonamevars[3] = input("confirm? (Y/n) ")
+            if nonamevars[3] in yes:
+                options["pathready"] = True
+            elif nonamevars[3] == "":
+                options["pathready"] = True
 
 def getoptions():
     while options["go"] == False:
@@ -172,15 +179,9 @@ def getoptions():
             pppp = input("replace pre-existing lyrics? (y/N) ")
             
             if pppp in yes:
-                options["replace"] = True
-                print("will replace duplicate files")
-                nonamevars
-            elif pppp in no:
+                options["replace"] = True        
+            elif pppp in [no, ""]:
                 options["replace"] = False
-                print("will not replace duplicate files")
-            elif pppp == "":
-                options["replace"] = False
-                print("defaulting to no replacing")
             else:
                 nonamevars[1] = False
             
@@ -192,29 +193,26 @@ def getoptions():
             
             if qqqq in yes:
                 options["plain"] = True
-                print("will save plain lyrics")
-            elif qqqq in no:
+            elif qqqq in [no, ""]:
                 options["plain"] = False
-                print("will not save plain lyrics")
-            elif qqqq == "":
-                options["plain"] = False
-                print("defaulting to no plain lyrics")
             else:
                 nonamevars[1] = False
         
         nonamevars[1] = False
         while nonamevars[1] == False:
             nonamevars[1] = True
-            conf = (input("confirm? (y/N) "))
+            conf = (input("confirm? (Y/n) "))
 
-            if conf in yes:
+            if conf in [yes, ""]:
                 options["go"] = True
-            elif conf in no or conf == "":
+            elif conf in no:
                 print("restarting")
             else:
                 nonamevars[1] = False
 
+    print("")
     print("press c or q then enter to cancel")
+    time.sleep(.5)
     for i in range(1, 4):
         print(i)
 
@@ -229,10 +227,15 @@ def getoptions():
                 break
 
     print("continuing")
+    time.sleep(.3)
 
 #-------------------------------------
 
 def lrcget(path):
+    errorfile = path / "silkpuller-errors.txt"
+    with open(errorfile, "w") as f:
+        f.write("silkpuller error log\n\n")
+
     global roger
     for file in path.rglob("*"):
         if file.suffix in supportedtypes:
@@ -302,10 +305,14 @@ def statushandler(status, file):
     global roger
     if status.status_code == 429:
         stats["errors"][429] += 1
+        roger = "rate limit, retrying"
+        result(file)
         time.sleep(int(status.headers["Retry-After"]))
         request(file)
     elif status.status_code == 503:
         stats["errors"][503] += 1
+        roger = "503 error, retrying"
+        result(file)
         time.sleep(.3)
         request(file)
     elif status.status_code == 404:
@@ -321,10 +328,27 @@ def statushandler(status, file):
         else:
             roger = "lrclib error"
             stats["errors"]["badlrclib"] += 1
+            errorlog(file, data, "data")
     else:
         stats["errors"]["unknownstatus"] += 1
         roger = "unknown status code"
+        errorlog(file, status, "status")
 
+def errorlog(file, dump, dumptype):
+    with open(options["path"] / "silkpuller-errors.txt", "a") as f:
+        f.write(f"{file.name}\n")
+
+        if dumptype == "status":
+            f.write(f"status code: {dump.status_code}\n")
+            f.write(f"headers: {dump.headers}\n")
+            f.write(f"response: {dump.text}\n")
+
+        elif dumptype == "data":
+            f.write("data:\n")
+            f.write(json.dumps(dump, indent=4))
+            f.write("\n")
+
+        f.write("---------------------------------------\n")
 
 def writer(data, file):
     global roger
@@ -349,9 +373,15 @@ def writer(data, file):
             f.write(data["plainLyrics"])
         roger = "saved plain lyrics"
         stats["lyrics"]["plain"] += 1
+    elif data["plainLyrics"] is not None:
+        roger = "only plain lyrics found"
+        stats["lyrics"]["skipped"] += 1
+        result(file)
+        return
     else:
         stats["errors"]["badlrclib"] += 1
         roger = "lrclib error"
+        errorlog(file, data, "data")
 
 def ready():
     for field in nonamevars:
@@ -362,43 +392,30 @@ def ready():
 def endstats():
     global errors
     print("------------End Statistics.------------")
+    print("Lyrics -")
     if stats["files"]["songs"] != 0:
-        print(f"songs checked -- {stats["files"]["songs"]}")
-    if stats["lyrics"]["found"] != 0:
-        print(f"    found new lyrics -- {stats["lyrics"]["found"]}")
-    if stats["lyrics"]["replaced"] != 0:
-        print(f"    replaced lyrics -- {stats["lyrics"]["replaced"]}")
-    if stats["lyrics"]["plain"] != 0:
-        print(f"    saved plain lyrics -- {stats["lyrics"]["plain"]}")
-    if stats["lyrics"]["skipped"] != 0:
-        print(f"    skipped lyrics -- {stats["lyrics"]["skipped"]}")
-    if stats["lyrics"]["missing"] != 0:
-        print(f"    missing lyrics -- {stats["lyrics"]["missing"]}")
+        print(f"    songs checked -- {stats["files"]["songs"]}")
+    for key, value in stats["lyrics"].items():
+        if stats["lyrics"][key] != 0:
+            print(f"        {key} lyrics -- {value}")
     print("---------------------------------------")
     for value in stats["errors"]:
         errors += stats["errors"][value]
-
-def errorprint():    
-    print(f"you have {errors} errors,")
-    time.sleep(.7)
-    while nonamevars[2] == False:
-        nonamevars[2] = True
-        secret = input("would you like to view them? (y/N) ")
-        if secret in yes:
-            for key, value in stats["errors"].items():
-                print(f"{key}: {value}")
-        elif secret in no or secret == "":
-            break
-        else:
-            nonamevars[2] = False
+   
+    if errors != 0:
+        print("Errors -")
+        for key, value in stats["errors"].items():
+            if stats["errors"][key] != 0:
+                print(f"    {key} -- {value}")
 
 #-------------------------------------
 
 def main():
     welcome()
-    pause()
     disclaimer()
-    pause()
+    print("")
+    input("read through that if you want, press enter to continue")
+    print("")
     getpath()
     pause()
     getoptions()
@@ -408,10 +425,6 @@ def main():
     pause()
 
     endstats()
-    pause()
-    if errors != 0:
-        errorprint()
-    pause()
     print("----Thank you for using silkpuller!----")
 
 #-------------------------------------
