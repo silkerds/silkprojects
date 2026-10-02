@@ -9,6 +9,7 @@ import os
 import sys
 import select
 import json
+import re
 
 #-------------------------------------
 
@@ -240,6 +241,9 @@ def lrcget(path):
         f = path / value
         f.unlink(missing_ok=True)
 
+    for field in nonamevars:
+        nonamevars[field] = False
+
     errorfile = path / "silkpuller-errors.txt"
     with open(errorfile, "w") as f:
         f.write("silkpuller error log\n\n")
@@ -282,7 +286,7 @@ def lrcget(path):
                     lyriclog(file, "meta", audio)
             except Exception as error:
                 roger = f"unhandled error - {error}"
-            if not call is None:
+            if call is not None:
                 result(file, call)
             else:
                 result(file)
@@ -310,6 +314,21 @@ def result(file, call=None):
     print(f"{file.name} -- {roger}")
     if call is None:
         time.sleep(.2)
+
+def syntaxchecker(data):
+    nonamevars[4] = False
+    pattern = r"\[\d+:\d+(?:\.\d+)?\]"
+    if re.search(pattern, data["plainLyrics"]):
+        pattern = r"\](?=\S)"
+        if re.search(pattern, data["plainLyrics"]):
+            data["plainLyrics"] = re.sub(
+                pattern,
+                "] ",
+                data["plainLyrics"]
+            )
+        nonamevars[4] = True
+        return(True)
+    return(False)
 
 def request(file):
     status = requests.get(
@@ -372,15 +391,15 @@ def errorlog(file, dump, dumptype):
 
 def lyriclog(file, type, audio=None):
     if type == "missing":
-        with open(options["path"] / "silkpuller-missinglyr.txt", "a") as f:
+        with open(options["path"] / statfiles["missingl"], "a") as f:
             f.write(f"Missing Lyrics\n")
             f.write(f"{file}\n")
     elif type == "plain":
-        with open(options["path"] / "silkpuller-plainlyr.txt", "a") as f:
+        with open(options["path"] / statfiles["plainl"], "a") as f:
             f.write(f"Plain Lyrics\n")
             f.write(f"{file}\n")
     elif type == "meta":
-        with open(options["path"] / "silkpuller-badmetadata.txt", "a") as f:
+        with open(options["path"] / statfiles["badmetal"], "a") as f:
             f.write(f"Bad Metadata\n")
             f.write(f"{file}\n")
             f.write(f"{audio}")
@@ -398,18 +417,37 @@ def writer(data, file):
         elif options["whatdidido"] == "exist":
             stats["lyrics"]["replaced"] += 1
             roger = "replacing current lyrics"
+    elif (
+        data["plainLyrics"] is not None and
+        syntaxchecker(data)
+    ):
+        with open(file.with_suffix(".lrc"), "w") as f:
+            f.write(data["plainLyrics"])
+        if existvar["txtfile"]:
+            existvar["txtfilef"].unlink(missing_ok=True)
+        if options["whatdidido"] == "new":
+            stats["lyrics"]["found"] += 1
+            roger = "lyrics found"
+        elif options["whatdidido"] == "exist":
+            stats["lyrics"]["replaced"] += 1
+            roger = "replacing current lyrics"
     elif(
         data["plainLyrics"] is not None and
         options["plain"] and
         not existvar["txtfile"] and
-        not existvar["lrcfile"]
+        not existvar["lrcfile"] and
+        not nonamevars[4]
     ):
         with open(file.with_suffix(".txt"), "w") as f:
             f.write(data["plainLyrics"])
         roger = "saved plain lyrics"
         stats["lyrics"]["plain"] += 1
         lyriclog(file, "plain")
-    elif data["plainLyrics"] is not None and not options["plain"]:
+    elif(
+        data["plainLyrics"] is not None and
+        not options["plain"] and
+        not nonamevars[4]
+    ):
         roger = "only plain lyrics found"
         stats["lyrics"]["skipped"] += 1
         return
@@ -417,10 +455,6 @@ def writer(data, file):
         stats["errors"]["badlrclib"] += 1
         roger = "lrclib error"
         errorlog(file, data, "data")
-
-def ready():
-    for field in nonamevars:
-        nonamevars[field] = False
 
 #-------------------------------------
 
