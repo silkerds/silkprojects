@@ -246,6 +246,7 @@ def lrcget(path):
 
     global roger
     for file in path.rglob("*"):
+        call = None
         if file.suffix in supportedtypes:
             stats["files"]["songs"] += 1
             for field in existvar:
@@ -274,13 +275,17 @@ def lrcget(path):
                     ):
                         stats["lyrics"]["skipped"] += 1
                         roger = "lyrics already exist"
+                        call = "skipped"
                 else:
                     stats["errors"]["metadata"] += 1
                     roger = "metadata error"
                     lyriclog(file, "meta", audio)
             except Exception as error:
                 roger = f"unhandled error - {error}"
-            result(file)
+            if not call is None:
+                result(file, call)
+            else:
+                result(file)
             
 def metacheck(audio):
     for field in metadata:
@@ -301,8 +306,10 @@ def metacheck(audio):
     
     return all(metadata[field] is not None for field in requiredmetadata)
 
-def result(file):
+def result(file, call=None):
     print(f"{file.name} -- {roger}")
+    if call is None:
+        time.sleep(.2)
 
 def request(file):
     status = requests.get(
@@ -325,7 +332,7 @@ def statushandler(status, file):
         stats["errors"][503] += 1
         roger = "503 error, retrying"
         result(file)
-        time.sleep(.3)
+        time.sleep(1)
         request(file)
     elif status.status_code == 404:
         roger = ("no lyrics found")
@@ -363,7 +370,7 @@ def errorlog(file, dump, dumptype):
 
         f.write("---------------------------------------\n")
 
-def lyriclog(file, type, audio):
+def lyriclog(file, type, audio=None):
     if type == "missing":
         with open(options["path"] / "silkpuller-missinglyr.txt", "a") as f:
             f.write(f"Missing Lyrics\n")
@@ -377,6 +384,7 @@ def lyriclog(file, type, audio):
             f.write(f"Bad Metadata\n")
             f.write(f"{file}\n")
             f.write(f"{audio}")
+
 def writer(data, file):
     global roger
     if data["syncedLyrics"] is not None:
@@ -401,10 +409,9 @@ def writer(data, file):
         roger = "saved plain lyrics"
         stats["lyrics"]["plain"] += 1
         lyriclog(file, "plain")
-    elif data["plainLyrics"] is not None:
+    elif data["plainLyrics"] is not None and not options["plain"]:
         roger = "only plain lyrics found"
         stats["lyrics"]["skipped"] += 1
-        result(file)
         return
     else:
         stats["errors"]["badlrclib"] += 1
