@@ -28,7 +28,7 @@ query = {
 lrclib_url = "https://lrclib.net/api/get"
 
 headers = {
-    "User-Agent": "silkpuller v1.0.1 https://github.com/silkerds/silkprojects"
+    "User-Agent": "silkpuller v1.0.2 https://github.com/silkerds/silkprojects"
 }
 
 existvar = {
@@ -137,7 +137,11 @@ requiredmetadata = {
     ]
 }
 
-
+statfiles = {
+    "missingl": "silkpuller-missinglyr.txt",
+    "plainl": "silkpuller-plainlyr.txt",
+    "badmetal": "silkpuller-badmeta.txt",
+}
 
 #-------------------------------------
 
@@ -180,7 +184,7 @@ def getoptions():
             
             if pppp in yes:
                 options["replace"] = True        
-            elif pppp in [no, ""]:
+            elif pppp in no or pppp == "":
                 options["replace"] = False
             else:
                 nonamevars[1] = False
@@ -193,7 +197,7 @@ def getoptions():
             
             if qqqq in yes:
                 options["plain"] = True
-            elif qqqq in [no, ""]:
+            elif qqqq in no or qqqq == "":
                 options["plain"] = False
             else:
                 nonamevars[1] = False
@@ -203,7 +207,7 @@ def getoptions():
             nonamevars[1] = True
             conf = (input("confirm? (Y/n) "))
 
-            if conf in [yes, ""]:
+            if conf in yes or conf == "":
                 options["go"] = True
             elif conf in no:
                 print("restarting")
@@ -232,6 +236,10 @@ def getoptions():
 #-------------------------------------
 
 def lrcget(path):
+    for value in statfiles:
+        f = path / value
+        f.unlink(missing_ok=True)
+
     errorfile = path / "silkpuller-errors.txt"
     with open(errorfile, "w") as f:
         f.write("silkpuller error log\n\n")
@@ -248,26 +256,30 @@ def lrcget(path):
             if file.with_suffix(".txt").exists():
                 existvar["txtfile"] = True
                 existvar["txtfilef"] = file.with_suffix(".txt")
-            audio = File(file)
-            if metacheck(audio):
-                roger = "roger was not written, find out why"
-                if not existvar["lrcfile"] or options["replace"]:
-                    options["whatdidido"] = "new"
-                    if( 
+            try:
+                audio = File(file)
+                if metacheck(audio):
+                    roger = "roger was not written, find out why"
+                    if not existvar["lrcfile"] or options["replace"]:
+                        options["whatdidido"] = "new"
+                        if( 
+                            existvar["lrcfile"] and
+                            options["replace"]
+                        ):
+                            options["whatdidido"] = "exist"
+                        request(file) 
+                    elif(
                         existvar["lrcfile"] and
-                        options["replace"]
+                        not options["replace"]
                     ):
-                        options["whatdidido"] = "exist"
-                    request(file) 
-                elif(
-                    existvar["lrcfile"] and
-                    not options["replace"]
-                ):
-                    stats["lyrics"]["skipped"] += 1
-                    roger = "lyrics already exist"
-            else:
-                stats["errors"]["metadata"] += 1
-                roger = "metadata error"
+                        stats["lyrics"]["skipped"] += 1
+                        roger = "lyrics already exist"
+                else:
+                    stats["errors"]["metadata"] += 1
+                    roger = "metadata error"
+                    lyriclog(file, "meta", audio)
+            except Exception as error:
+                roger = f"unhandled error - {error}"
             result(file)
             
 def metacheck(audio):
@@ -318,6 +330,7 @@ def statushandler(status, file):
     elif status.status_code == 404:
         roger = ("no lyrics found")
         stats["lyrics"]["missing"] += 1
+        lyriclog(file, "missing")
     elif status.status_code == 200:
         data = status.json()
         if data["instrumental"]:
@@ -350,6 +363,20 @@ def errorlog(file, dump, dumptype):
 
         f.write("---------------------------------------\n")
 
+def lyriclog(file, type, audio):
+    if type == "missing":
+        with open(options["path"] / "silkpuller-missinglyr.txt", "a") as f:
+            f.write(f"Missing Lyrics\n")
+            f.write(f"{file}\n")
+    elif type == "plain":
+        with open(options["path"] / "silkpuller-plainlyr.txt", "a") as f:
+            f.write(f"Plain Lyrics\n")
+            f.write(f"{file}\n")
+    elif type == "meta":
+        with open(options["path"] / "silkpuller-badmetadata.txt", "a") as f:
+            f.write(f"Bad Metadata\n")
+            f.write(f"{file}\n")
+            f.write(f"{audio}")
 def writer(data, file):
     global roger
     if data["syncedLyrics"] is not None:
@@ -373,6 +400,7 @@ def writer(data, file):
             f.write(data["plainLyrics"])
         roger = "saved plain lyrics"
         stats["lyrics"]["plain"] += 1
+        lyriclog(file, "plain")
     elif data["plainLyrics"] is not None:
         roger = "only plain lyrics found"
         stats["lyrics"]["skipped"] += 1
