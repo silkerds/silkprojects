@@ -10,6 +10,7 @@ import sys
 import select
 import json
 import re
+import customtkinter
 
 #-------------------------------------
 
@@ -29,7 +30,7 @@ query = {
 lrclib_url = "https://lrclib.net/api/get"
 
 headers = {
-    "User-Agent": "silkpuller v1.0.3 https://github.com/silkerds/silkprojects"
+    "User-Agent": "silkpuller v1.0.6 https://github.com/silkerds/silkprojects"
 }
 
 existvar = {
@@ -101,7 +102,11 @@ nonamevars = {
     7: False,
     8: False,
     9: False,
-    0: False
+    0: False,
+    11: False,
+    12: False,
+    14: False,
+    15: False
 }
 
 supportedtypes = [
@@ -139,9 +144,17 @@ requiredmetadata = {
 }
 
 statfiles = {
-    "missingl": "silkpuller-missinglyr.txt",
-    "plainl": "silkpuller-plainlyr.txt",
-    "badmetal": "silkpuller-badmeta.txt",
+    "inter": {
+        "missingl": "silkpuller-missinglyr.txt",
+        "plainl": "silkpuller-plainlyr.txt",
+        "badmetal": "silkpuller-badmeta.txt",
+        "status": "silkpuller-status.txt",
+        "api": "silkpuller-api.txt"
+    },
+    "end": {
+        "leftover": "silk-leftover-list.txt",
+        "errors": "silkpuller-errors.txt"
+    }
 }
 
 #-------------------------------------
@@ -150,17 +163,16 @@ def welcome():
     print("silkpuller - a python learning project")
     time.sleep(1)
     print("silkpuller gets lyrics for your music")
-    print("it...")
-    print("     pulls lyrics from lrclib")
-    print("     searches for music recursively in a directory")
-    print("     and it supports multiple metadata tags for multiple audio filetypes")
+    print("""it...
+        pulls lyrics from lrclib")
+        searches for music recursively in a directory")
+        and it supports multiple metadata tags for multiple audio filetypes""")
 
 def disclaimer():
-    print("make sure your music has metadata for its artist, title, and album")
-    print("by default replaces .txt lyric files (with the naming convention from this script)")
-    print("with .lrc synced lyric files if the .txt exists and it finds synced lyrics")
-    print("makes a file in whatever directory you point it at that contains dumps for diagnostics if an error happens")
-    print("./silkpuller-errors.txt")
+    print("""make sure your music has metadata for its artist, title, and album
+    by default replaces .txt lyric files (with the naming convention from this script)
+    with .lrc synced lyric files if the .txt exists and it finds synced lyrics
+    also saves end stat diagnostic files to whatever directory it's run in""")
 
 #-------------------------------------
 
@@ -236,17 +248,10 @@ def getoptions():
 
 #-------------------------------------
 
-def lrcget(path):
-    for value in statfiles:
-        f = path / value
-        f.unlink(missing_ok=True)
-
+def lrcget():
+    path = options["path"]
     for field in nonamevars:
         nonamevars[field] = False
-
-    errorfile = path / "silkpuller-errors.txt"
-    with open(errorfile, "w") as f:
-        f.write("silkpuller error log\n\n")
 
     global roger
     for file in path.rglob("*"):
@@ -283,7 +288,7 @@ def lrcget(path):
                 else:
                     stats["errors"]["metadata"] += 1
                     roger = "metadata error"
-                    lyriclog(file, "meta", audio)
+                    statlog(file, "meta", audio)
             except Exception as error:
                 roger = f"unhandled error - {error}"
             if call is not None:
@@ -356,7 +361,7 @@ def statushandler(status, file):
     elif status.status_code == 404:
         roger = ("no lyrics found")
         stats["lyrics"]["missing"] += 1
-        lyriclog(file, "missing")
+        statlog(file, "missing")
     elif status.status_code == 200:
         data = status.json()
         if data["instrumental"]:
@@ -372,37 +377,6 @@ def statushandler(status, file):
         stats["errors"]["unknownstatus"] += 1
         roger = "unknown status code"
         errorlog(file, status, "status")
-
-def errorlog(file, dump, dumptype):
-    with open(options["path"] / "silkpuller-errors.txt", "a") as f:
-        f.write(f"{file.name}\n")
-
-        if dumptype == "status":
-            f.write(f"status code: {dump.status_code}\n")
-            f.write(f"headers: {dump.headers}\n")
-            f.write(f"response: {dump.text}\n")
-
-        elif dumptype == "data":
-            f.write("data:\n")
-            f.write(json.dumps(dump, indent=4))
-            f.write("\n")
-
-        f.write("---------------------------------------\n")
-
-def lyriclog(file, type, audio=None):
-    if type == "missing":
-        with open(options["path"] / statfiles["missingl"], "a") as f:
-            f.write(f"Missing Lyrics\n")
-            f.write(f"{file}\n")
-    elif type == "plain":
-        with open(options["path"] / statfiles["plainl"], "a") as f:
-            f.write(f"Plain Lyrics\n")
-            f.write(f"{file}\n")
-    elif type == "meta":
-        with open(options["path"] / statfiles["badmetal"], "a") as f:
-            f.write(f"Bad Metadata\n")
-            f.write(f"{file}\n")
-            f.write(f"{audio}")
 
 def writer(data, file):
     global roger
@@ -442,7 +416,7 @@ def writer(data, file):
             f.write(data["plainLyrics"])
         roger = "saved plain lyrics"
         stats["lyrics"]["plain"] += 1
-        lyriclog(file, "plain")
+        statlog(file, "plain")
     elif(
         data["plainLyrics"] is not None and
         not options["plain"] and
@@ -477,6 +451,127 @@ def endstats():
             if stats["errors"][key] != 0:
                 print(f"    {key} -- {value}")
 
+    for i in statfiles["inter"]:
+        (options["path"] / statfiles["inter"][i]).unlink(missing_ok=True)
+
+#-------------------------------------
+
+def errorlog(file, dump, dumptype):
+    
+    if dumptype == "status":
+        with open(options["path"] / statfiles["inter"]["status"], "a") as f:
+            f.write(f"status code: {dump.status_code}\n")
+            f.write(f"headers: {dump.headers}\n")
+            f.write(f"response: {dump.text}\n\n")
+    elif dumptype == "data":
+        with open(options["path"] / statfiles["inter"]["api"], "a") as f:
+            f.write("data:\n")
+            f.write(json.dumps(dump, indent=4))
+            f.write("\n\n")
+
+def errormerge():
+    path = options["path"]
+
+    data1 = ""
+    data2 = ""
+
+    f = options["path"] / statfiles["inter"]["status"]
+    if f.exists():
+        data1 = f.read_text()
+
+    f = options["path"] / statfiles["inter"]["api"]
+    if f.exists():
+        data2 = f.read_text()
+
+    with open(path / statfiles["end"]["errors"], "a") as f:
+        f.write(f"""
+        ----------- Error List -----------
+
+        Logs for errors relating to what the api returned
+        
+        Below, there should be entries for
+        {stats["errors"]["unknownstatus"]} unknown statuses and
+        {stats["errors"]["badlrclib"]} broken return jsons
+
+        ----------- Unknown Status -----------
+
+        {data1}
+
+        ----------- API Side Error -----------
+        (or an accidental issue from me)
+
+        {data2}
+
+        ----------- End -----------
+        """
+        )
+    nonamevars[14] = True
+
+def statlog(file, type, audio=None):
+    if type == "missing":
+        with open(options["path"] / statfiles["inter"]["missingl"], "a") as f:
+            f.write(f"{file}\n")
+    elif type == "plain":
+        with open(options["path"] / statfiles["inter"]["plainl"], "a") as f:
+            f.write(f"{file}\n")
+    elif type == "meta":
+        with open(options["path"] / statfiles["inter"]["badmetal"], "a") as f:
+            f.write(f"{file}\n")
+            f.write(f"{audio}")
+
+def statmerge():
+    path = options["path"]
+
+    data1 = ""
+    data2 = ""
+    data3 = ""
+
+    f = options["path"] / statfiles["inter"]["missingl"]
+    if f.exists():
+        data1 = f.read_text()
+
+    f = options["path"] / statfiles["inter"]["plainl"]
+    if f.exists():
+        data2 = f.read_text()
+
+    f = options["path"] / statfiles["inter"]["badmetal"]
+    if f.exists():
+        data3 = f.read_text()
+
+    with open(path / statfiles["end"]["leftover"], "w") as f:
+        f.write(f"""
+        ----------- Leftover Files -----------
+        
+        Any songs that got skipped for either:
+            not finding lyrics
+            only finding plain lyrics
+            bad metadata
+        
+        Below, there should be entries for
+        {stats["lyrics"]["missing"]} 404s
+        {stats["lyrics"]["plain"]} Plain
+        {stats["errors"]["metadata"]} bad metadata
+
+        There may also be an error list file if any errors occurred
+        if it exists it will be at {path}/{statfiles["end"]["errors"]}
+
+        ----------- 404 Lyrics Not Found -----------
+        
+        {data1}
+
+        ----------- Only Plain Lyrics Found -----------
+
+        {data2}
+
+        ----------- Bad Metadata -----------
+
+        {data3}
+
+        ----------- End -----------
+        """
+        )
+    nonamevars[15] = True
+
 #-------------------------------------
 
 def main():
@@ -490,9 +585,13 @@ def main():
     getoptions()
     pause()
 
-    lrcget(options["path"])
+    lrcget()
     pause()
 
+    for field in nonamevars:
+        nonamevars[field] = False
+    statmerge()
+    errormerge()
     endstats()
     print("----Thank you for using silkpuller!----")
 
@@ -502,5 +601,22 @@ def pause():
     print(" ")
     time.sleep(.5)
 
+def cleanup():
+    if nonamevars[14] and nonamevars[15]:
+        for field in statfiles["inter"]:
+            (options["path"] / statfiles["inter"][field]).unlink(missing_ok=True)
+    else:
+        for k in statfiles:
+            for i in statfiles[k]:
+                (options["path"] / statfiles[k][i]).unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        cleanup()
+        print(f"\ncleaning up")
+    except Exception as error:
+        cleanup()
+        print(f"\n error: {error}")
